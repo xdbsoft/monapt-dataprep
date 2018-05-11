@@ -1,11 +1,12 @@
 package main
 
 type AirportInfo struct {
-	ICAO        string `json:"icao,omitempty"`
-	IATA        string `json:"iata,omitempty"`
-	Name        string `json:"name,omitempty"`
-	CountryZone Zone   `json:"zone,omitempty"`
-	Position    Point  `json:"pos,omitempty"`
+	ICAO         string `json:"icao,omitempty"`
+	IATA         string `json:"iata,omitempty"`
+	Name         string `json:"name,omitempty"`
+	CountryZone  Zone   `json:"zone,omitempty"`
+	CountryRange Range  `json:"range,omitempty"`
+	Position     Point  `json:"pos,omitempty"`
 }
 
 func airportInfo(airports []AirportRecord, excludedZone Zone) []AirportInfo {
@@ -19,6 +20,7 @@ func airportInfo(airports []AirportRecord, excludedZone Zone) []AirportInfo {
 			i.IATA = a.IATA
 			i.Name = a.Name
 			i.CountryZone = a.CountryZone
+			i.CountryRange = a.CountryRange
 			i.Position = a.Position
 
 			infos = append(infos, i)
