@@ -85,7 +85,29 @@ func main() {
 		pax += value[1].(int)
 		aggregate[1] = pax
 
-		//TODO: aggregate
+		//TODO check for duplicate
+		aggregate[2] = value[2]
+		aggregate[3] = value[3]
+		aggregate[4] = value[4]
+		aggregate[5] = value[5]
+
+		return aggregate
+	}
+	aggregateTraffic := func(aggregate, value []interface{}) []interface{} {
+
+		flights, ok := aggregate[0].(int)
+		if !ok {
+			flights = 0
+		}
+		flights += value[0].(int)
+		aggregate[0] = flights
+
+		pax, ok := aggregate[1].(int)
+		if !ok {
+			pax = 0
+		}
+		pax += value[1].(int)
+		aggregate[1] = pax
 
 		return aggregate
 	}
@@ -160,18 +182,6 @@ func main() {
 
 	for _, d := range delays {
 
-		debug := false
-		if d.DepartureICAO == "LFKJ" &&
-			d.ArrivalICAO == "LFMN" &&
-			d.Date.Year == 2016 &&
-			d.Date.Month == 3 {
-			debug = true
-		}
-
-		if debug {
-			log.Println("Delay", d)
-		}
-
 		pt := toPoint(d.Date, d.DepartureICAO, d.ArrivalICAO)
 		ptReverse := switchDepArr(pt)
 
@@ -187,10 +197,6 @@ func main() {
 			log.Println("Not found reverse", d)
 		}
 
-		if debug {
-			log.Println("Key", k, kReverse, idx, idxReverse)
-		}
-
 		if d.Value.InfoAtDeparture {
 			cubeLink.Data[idx][2] = d.Value.Percent15AtDeparture
 			cubeLink.Data[idx][4] = d.Value.MeanDelayAtDeparture
@@ -204,30 +210,34 @@ func main() {
 			cubeLink.Data[idxReverse][5] = d.Value.MeanDelayAtArrival
 		}
 
-		if debug {
-			log.Println("cubeLink.Data[idx]", cubeLink.Data[idx])
-			log.Println("cubeLink.Data[idxReverse]", cubeLink.Data[idxReverse])
-		}
 	}
 
 	//Slice per airport and export
-	// for _, airport := range airportRecords {
+	for _, airport := range airportRecords {
 
-	// 	if airport.CountryZone != "I" {
+		if airport.CountryZone != "I" && airport.ICAO[0] != 'Z' {
 
-	cubeLinkAirport := cubeLink.Slice("icao", "LFKJ").RollUp(
-		// 		cubeLinkAirport := cubeLink.Slice("icao", airport.ICAO).RollUp(
-		[]string{"year", "month", "direction", "dest_icao", "dest_country", "dest_zone", "dest_range"},
-		cubeLink.Fields,
-		aggregateCubeLink,
-		make([]interface{}, len(cubeLink.Fields)),
-	)
+			cubeLinkAirport := cubeLink.Slice("icao", airport.ICAO)
 
-	encode(cubeLinkAirport, fmt.Sprintf("json/%s_cube_links.json", "LFKJ"))
-	encode(cubeLinkAirport.Rows(), fmt.Sprintf("json/%s_cube_rows.json", "LFKJ"))
-	//		encode(cubeLinkAirport, fmt.Sprintf("json/%s_cube_links.json", airport.ICAO))
-	// 	}
-	// }
+			cubeLinkAirport = cubeLinkAirport.RollUp(
+				[]string{"year", "month", "direction", "dest_icao", "dest_country", "dest_zone", "dest_range"},
+				cubeLink.Fields,
+				aggregateCubeLink,
+				make([]interface{}, len(cubeLink.Fields)),
+			)
+			//encode(cubeLinkAirport, fmt.Sprintf("json/%s_cube_links.json", airport.ICAO))
+
+			cubeDelays := cubeLinkAirport.Dice(func(c olap.Cube, idx int) bool {
+				return c.Data[idx][2] != nil || c.Data[idx][3] != nil
+			})
+			if len(cubeDelays.Points) > 0 {
+				encode(cubeDelays, fmt.Sprintf("json/%s_cube_links_delays.json", airport.ICAO))
+			}
+
+			cubeTraffic := cubeLinkAirport.RollUp(cubeLinkAirport.Dimensions, []string{"flights", "pax"}, aggregateTraffic, []interface{}{0, 0})
+			encode(cubeTraffic, fmt.Sprintf("json/%s_cube_links_traffic.json", airport.ICAO))
+		}
+	}
 
 	//APT_OACI;APT_IATA;APT_NOM;APT_ISO2;APT_PAYS;PAYS_ZON;PAYS_FSC;APT_LAT;APT_LONG
 
