@@ -69,87 +69,9 @@ func main() {
 		Fields:     []string{"flights", "pax", "delay_15_pct_dep", "delay_15_pct_arr", "delay_mean_dep", "delay_mean_arr"},
 	}
 
-	aggregateCubeLink := func(aggregate, value []interface{}) []interface{} {
-
-		flights, ok := aggregate[0].(int)
-		if !ok {
-			flights = 0
-		}
-		flights += value[0].(int)
-		aggregate[0] = flights
-
-		pax, ok := aggregate[1].(int)
-		if !ok {
-			pax = 0
-		}
-		pax += value[1].(int)
-		aggregate[1] = pax
-
-		//TODO check for duplicate
-		aggregate[2] = value[2]
-		aggregate[3] = value[3]
-		aggregate[4] = value[4]
-		aggregate[5] = value[5]
-
-		return aggregate
-	}
-	aggregateTraffic := func(aggregate, value []interface{}) []interface{} {
-
-		flights, ok := aggregate[0].(int)
-		if !ok {
-			flights = 0
-		}
-		flights += value[0].(int)
-		aggregate[0] = flights
-
-		pax, ok := aggregate[1].(int)
-		if !ok {
-			pax = 0
-		}
-		pax += value[1].(int)
-		aggregate[1] = pax
-
-		return aggregate
-	}
-
-	toPoint := func(date MonthPeriod, icaoDep string, icaoArr string) []interface{} {
-
-		escaleDep := getEscale(icaoDep, airportRecords)
-		escaleArr := getEscale(icaoArr, airportRecords)
-
-		pt := make([]interface{}, len(cubeLink.Dimensions))
-		pt[0] = date.Year
-		pt[1] = date.Month
-		pt[2] = escaleDep.ICAO
-		pt[3] = escaleDep.CountryCode
-		pt[4] = escaleDep.Zone
-		pt[5] = escaleDep.Range
-		pt[6] = "D"
-		pt[7] = escaleArr.ICAO
-		pt[8] = escaleArr.CountryCode
-		pt[9] = escaleArr.Zone
-		pt[10] = escaleArr.Range
-
-		return pt
-	}
-
-	switchDepArr := func(pt []interface{}) []interface{} {
-
-		ptArr := make([]interface{}, len(pt))
-		copy(ptArr, pt)
-
-		ptArr[6] = "A"
-		ptArr[2], ptArr[7] = ptArr[7], ptArr[2]
-		ptArr[3], ptArr[8] = ptArr[8], ptArr[3]
-		ptArr[4], ptArr[9] = ptArr[9], ptArr[4]
-		ptArr[5], ptArr[10] = ptArr[10], ptArr[5]
-
-		return ptArr
-	}
-
 	for _, t := range traffic {
 
-		pt := toPoint(t.Date, t.DepartureICAO, t.ArrivalICAO)
+		pt := toPoint(t.Date, t.DepartureICAO, t.ArrivalICAO, airportRecords)
 		ptReverse := switchDepArr(pt)
 
 		data := make([]interface{}, len(cubeLink.Fields))
@@ -182,7 +104,7 @@ func main() {
 
 	for _, d := range delays {
 
-		pt := toPoint(d.Date, d.DepartureICAO, d.ArrivalICAO)
+		pt := toPoint(d.Date, d.DepartureICAO, d.ArrivalICAO, airportRecords)
 		ptReverse := switchDepArr(pt)
 
 		k := key(pt)
@@ -239,21 +161,47 @@ func main() {
 		}
 	}
 
-	//APT_OACI;APT_IATA;APT_NOM;APT_ISO2;APT_PAYS;PAYS_ZON;PAYS_FSC;APT_LAT;APT_LONG
+	//Create the cube at airport level for emissions
+	cubeEmissions := olap.Cube{
+		Dimensions: []string{"year", "month", "icao", "dest_zone", "dest_range", "category"},
+		Fields:     []string{"movements", "pax", "peq", "co2_kt", "nox_t", "covnm_t", "tsp_t"},
+	}
 
-	//ANMOIS;APT;FSC;ZON;CAT;MVT;PAX;PEQ;CO2;NOX;COVNM;TSP
+	for _, e := range emissions {
 
-	//ANMOIS;DEP;ARR;NVOLS;PAX_FS;FSC;ZON
-	//ANMOIS;DEP;ARR;PC15_D;PC15_A;RETARD_D;RETARD_A
+		pt := make([]interface{}, len(cubeEmissions.Dimensions))
+		pt[0] = e.Date.Year
+		pt[1] = e.Date.Month
+		pt[2] = e.ICAO
+		pt[3] = e.Zone
+		pt[4] = e.Range
+		pt[5] = e.Category
 
-	// DEP/ARR -> APT/DIR/ESC
-	// ESC -> ESC/FSC/ZON/
+		data := make([]interface{}, len(cubeEmissions.Fields))
+		data[0] = e.Value.Movements
+		data[1] = e.Value.PaxCount
+		data[2] = e.Value.PaxEquivalentCount
+		data[3] = e.Value.Co2KiloTons
+		data[4] = e.Value.NoxTons
+		data[5] = e.Value.NonMethaneVOCTons
+		data[6] = e.Value.TotalParticlesInSuspensionTons
 
-	//Create the cube at airport/destination level for traffic and delays
-	//Dim: ANMOIS;APT;DIR;ESC;ESCFSC;ESCZON;APTFSC;APTZON
-	//Fields: NVOLS;PAX_FS;PC15_D;PC15_A;RETARD_D;RETARD_A
+		cubeEmissions.Points = append(cubeEmissions.Points, pt)
+		cubeEmissions.Data = append(cubeEmissions.Data, data)
+	}
 
 	//Slice per airport and export
+	for _, airport := range airportRecords {
+
+		if airport.CountryZone != "I" && airport.ICAO[0] != 'Z' {
+
+			cubeEmissionsAirport := cubeEmissions.Slice("icao", airport.ICAO)
+
+			if len(cubeEmissionsAirport.Points) > 0 {
+				encode(cubeEmissionsAirport, fmt.Sprintf("json/%s_cube_emissions.json", airport.ICAO))
+			}
+		}
+	}
 
 	//Create the cube at airport level only for traffic and emission
 	//Dim: ANMOIS;APT;FSC;ZON;CAT
@@ -295,4 +243,82 @@ func encode(d interface{}, path string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func aggregateCubeLink(aggregate, value []interface{}) []interface{} {
+
+	flights, ok := aggregate[0].(int)
+	if !ok {
+		flights = 0
+	}
+	flights += value[0].(int)
+	aggregate[0] = flights
+
+	pax, ok := aggregate[1].(int)
+	if !ok {
+		pax = 0
+	}
+	pax += value[1].(int)
+	aggregate[1] = pax
+
+	//TODO check for duplicate
+	aggregate[2] = value[2]
+	aggregate[3] = value[3]
+	aggregate[4] = value[4]
+	aggregate[5] = value[5]
+
+	return aggregate
+}
+func aggregateTraffic(aggregate, value []interface{}) []interface{} {
+
+	flights, ok := aggregate[0].(int)
+	if !ok {
+		flights = 0
+	}
+	flights += value[0].(int)
+	aggregate[0] = flights
+
+	pax, ok := aggregate[1].(int)
+	if !ok {
+		pax = 0
+	}
+	pax += value[1].(int)
+	aggregate[1] = pax
+
+	return aggregate
+}
+
+func toPoint(date MonthPeriod, icaoDep string, icaoArr string, airportRecords []AirportRecord) []interface{} {
+
+	escaleDep := getEscale(icaoDep, airportRecords)
+	escaleArr := getEscale(icaoArr, airportRecords)
+
+	pt := make([]interface{}, 11)
+	pt[0] = date.Year
+	pt[1] = date.Month
+	pt[2] = escaleDep.ICAO
+	pt[3] = escaleDep.CountryCode
+	pt[4] = escaleDep.Zone
+	pt[5] = escaleDep.Range
+	pt[6] = "D"
+	pt[7] = escaleArr.ICAO
+	pt[8] = escaleArr.CountryCode
+	pt[9] = escaleArr.Zone
+	pt[10] = escaleArr.Range
+
+	return pt
+}
+
+func switchDepArr(pt []interface{}) []interface{} {
+
+	ptArr := make([]interface{}, len(pt))
+	copy(ptArr, pt)
+
+	ptArr[6] = "A"
+	ptArr[2], ptArr[7] = ptArr[7], ptArr[2]
+	ptArr[3], ptArr[8] = ptArr[8], ptArr[3]
+	ptArr[4], ptArr[9] = ptArr[9], ptArr[4]
+	ptArr[5], ptArr[10] = ptArr[10], ptArr[5]
+
+	return ptArr
 }
